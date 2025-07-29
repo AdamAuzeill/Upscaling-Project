@@ -5,6 +5,8 @@ from src.upscale import upscale_image
 from PIL import Image
 import os
 
+#Commentaire de moi
+
 def compare_images(image_path1, image_path2):
     """
     Compares two images and shows them side-by-side.
