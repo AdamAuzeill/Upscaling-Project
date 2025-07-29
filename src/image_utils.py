@@ -15,3 +15,5 @@ def blur_image(image_path, output_path, radius=2):
     with Image.open(image_path) as img:
         blurred_img = img.filter(ImageFilter.GaussianBlur(radius))
         blurred_img.save(output_path)
+
+
