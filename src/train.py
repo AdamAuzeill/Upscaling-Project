@@ -125,9 +125,9 @@ def train_model(data_folder,
     print(f"\n💾 Modèle sauvegardé dans {save_path}")
 
 
-# ----------------------------
-# Exécution (à lancer dans Colab)
-# ----------------------------
+# ------------
+# Exécution
+# ------------
 if __name__ == "__main__":
     DATA_FOLDER = "dataset"
     train_model(
