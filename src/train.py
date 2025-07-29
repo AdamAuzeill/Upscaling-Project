@@ -1,83 +1,138 @@
+import os
+import glob
+from PIL import Image
 import torch
 import torch.nn as nn
-import torch.optim as optim
-from torch.utils.data import DataLoader, Dataset
-from torchvision import transforms
-from PIL import Image
-import os
+import torchvision.transforms as T
+from torch.utils.data import Dataset, DataLoader
+from tqdm import tqdm
 
-# Define the CNN model
-class UpscaleCNN(nn.Module):
-    def __init__(self):
-        super(UpscaleCNN, self).__init__()
-        self.conv1 = nn.Conv2d(3, 64, kernel_size=9, padding=4)
-        self.conv2 = nn.Conv2d(64, 32, kernel_size=1, padding=0)
-        self.conv3 = nn.Conv2d(32, 3, kernel_size=5, padding=2)
-        self.relu = nn.ReLU()
 
-    def forward(self, x):
-        x = self.relu(self.conv1(x))
-        x = self.relu(self.conv2(x))
-        x = self.conv3(x)
-        return x
-
-# Custom Dataset for your cat images
-class CatDataset(Dataset):
-    def __init__(self, image_dir, transform=None):
-        self.image_dir = image_dir
-        self.image_files = os.listdir(image_dir)
-        self.transform = transform
+# ----------------------------
+# Dataset pré-calculé (crop fixe + lr/up)
+# ----------------------------
+class FixedCropEnhancementDataset(Dataset):
+    def __init__(self, folder, crop_size=128):
+        self.crop_size = crop_size
+        self.paths = sorted(
+            glob.glob(os.path.join(folder, '*.jpg')) +
+            glob.glob(os.path.join(folder, '*.jpeg')) +
+            glob.glob(os.path.join(folder, '*.png'))
+        )
+        self.to_tensor = T.ToTensor()
 
     def __len__(self):
-        return len(self.image_files)
+        return len(self.paths)
 
     def __getitem__(self, idx):
-        img_path = os.path.join(self.image_dir, self.image_files[idx])
-        image = Image.open(img_path).convert("RGB")
-        if self.transform:
-            image = self.transform(image)
-        return image
+        img = Image.open(self.paths[idx]).convert('RGB')
+        if img.width < self.crop_size or img.height < self.crop_size:
+            raise RuntimeError(f"Image trop petite : {self.paths[idx]}")
 
-def train_model(dataset_path, model_save_path, num_epochs=100, learning_rate=0.001):
-    """
-    Trains the CNN model and saves it.
-    """
-    transform = transforms.Compose([
-        transforms.ToTensor(),
-    ])
+        # Crop centré fixe
+        left = (img.width - self.crop_size) // 2
+        top = (img.height - self.crop_size) // 2
+        hr_patch = img.crop((left, top, left + self.crop_size, top + self.crop_size))
 
-    dataset = CatDataset(image_dir=dataset_path, transform=transform)
-    dataloader = DataLoader(dataset, batch_size=16, shuffle=True)
+        # Downscale puis upscale
+        lr_patch = hr_patch.resize((self.crop_size // 2, self.crop_size // 2), Image.BICUBIC)
+        lr_patch = lr_patch.resize((self.crop_size, self.crop_size), Image.BICUBIC)
 
-    model = UpscaleCNN()
-    criterion = nn.MSELoss()
-    optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+        return self.to_tensor(lr_patch), self.to_tensor(hr_patch)
 
-    for epoch in range(num_epochs):
-        for data in dataloader:
-            # For this simple example, we'll use the image itself as the target
-            # In a real scenario, you'd have low-res and high-res pairs
-            inputs = data
-            targets = data
 
-            optimizer.zero_grad()
-            outputs = model(inputs)
-            loss = criterion(outputs, targets)
-            loss.backward()
-            optimizer.step()
+class PrecomputedRAMDataset(Dataset):
+    def __init__(self, base_dataset):
+        print("Préchargement des données en RAM, ça peut prendre quelques secondes...")
+        self.data = []
+        for i in tqdm(range(len(base_dataset))):
+            self.data.append(base_dataset[i])
+        print(f"✅ Chargé {len(self.data)} images en RAM")
 
-        print(f"Epoch [{epoch+1}/{num_epochs}], Loss: {loss.item():.4f}")
+    def __len__(self):
+        return len(self.data)
 
-    torch.save(model.state_dict(), model_save_path)
-    print(f"Model saved to {model_save_path}")
+    def __getitem__(self, idx):
+        return self.data[idx]
 
-if __name__ == '__main__':
-    # Example usage:
-    # Create a dummy dataset for demonstration
-    if not os.path.exists('data/dummy_images'):
-        os.makedirs('data/dummy_images')
-        for i in range(10):
-            dummy_image = Image.new('RGB', (128, 128), color = 'red')
-            dummy_image.save(f'data/dummy_images/cat_{i}.png')
 
-    train_model('data/dummy_images', 'models/upscale_cnn.pth')
+# ----------------------------
+# Modèle CNN simple
+# ----------------------------
+class CNNEnhancer(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Conv2d(3, 64, 9, padding=4),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(64, 32, 5, padding=2),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(32, 3, 5, padding=2)
+        )
+
+    def forward(self, x):
+        return self.net(x)
+
+
+# ----------------------------
+# Boucle d'entraînement
+# ----------------------------
+def train_model(data_folder,
+                crop_size=128,
+                epochs=20,
+                batch_size=16,
+                lr=1e-4,
+                save_path=None):
+
+    # On utilise le GPU si possible
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    # Création du dataset et chargement de celui-ci
+    base_dataset = FixedCropEnhancementDataset(data_folder, crop_size)
+    dataset = PrecomputedRAMDataset(base_dataset)
+
+    loader = DataLoader(dataset, batch_size=batch_size, shuffle=True,
+                        num_workers=2, pin_memory=True)
+
+    model = CNNEnhancer().to(device)
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    loss_fn = nn.MSELoss()
+
+    for epoch in range(1, epochs+1):
+        model.train()
+        running_loss = 0.0
+
+        # Boucle sur les batch
+        for lr_imgs, hr_imgs in tqdm(loader, desc=f"Epoch {epoch}/{epochs}"):
+            lr_imgs = lr_imgs.to(device, non_blocking=True)
+            hr_imgs = hr_imgs.to(device, non_blocking=True)
+
+            preds = model(lr_imgs)
+            loss = loss_fn(preds, hr_imgs)
+
+            optimizer.zero_grad() # On remet les gradients à 0
+            loss.backward() # On calcule la dérivée partielle (gradient) pour chaque poids
+            optimizer.step() # On ajuste les poids en fonction du gradient
+
+            running_loss += loss.item() * lr_imgs.size(0)
+
+        avg_loss = running_loss / len(dataset)
+        print(f"Epoch {epoch} | Avg Loss: {avg_loss:.6f}")
+
+    torch.save(model.state_dict(), save_path)
+    print(f"\n💾 Modèle sauvegardé dans {save_path}")
+
+
+# ----------------------------
+# Exécution (à lancer dans Colab)
+# ----------------------------
+if __name__ == "__main__":
+    DATA_FOLDER = "dataset"
+    train_model(
+        data_folder=DATA_FOLDER,
+        crop_size=512,
+        epochs=20,
+        batch_size=12,
+        lr=2e-4,
+        save_path="models/cnn_enhancer.pth"
+    )

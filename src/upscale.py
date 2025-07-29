@@ -1,52 +1,44 @@
 import torch
-from torchvision import transforms
-from PIL import Image
-from src.train import UpscaleCNN
-import os
+from PIL import Image, ImageOps
+import torchvision.transforms as T
+from train import CNNEnhancer
 
-def upscale_image(model_path, image_path, output_path):
-    """
-    Upscales an image using the trained model.
-    """
-    # Load the model
-    model = UpscaleCNN()
-    model.load_state_dict(torch.load(model_path))
+def enhance_image(image_path, model_path, output_path_hr, output_path_lr):
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    # 1. Charger l’image d’origine
+    img = Image.open(image_path).convert("RGB")
+    img = ImageOps.exif_transpose(img)  # remet l’image dans le bon sens
+
+    # 2. Créer l’image basse résolution (downscale + upscale)
+    orig_size = img.size  # (width, height)
+    lr_img = img.resize((orig_size[0] // 2, orig_size[1] // 2), Image.BICUBIC)
+    lr_img_upscaled = lr_img.resize(orig_size, Image.BICUBIC)
+
+    # 3. Transformer en tenseur pour PyTorch
+    to_tensor = T.ToTensor()
+    input_tensor = to_tensor(lr_img_upscaled).unsqueeze(0).to(device)
+
+    # 4. Charger le modèle
+    model = CNNEnhancer().to(device)
+    model.load_state_dict(torch.load(model_path, map_location=device))
     model.eval()
 
-    # Prepare the image
-    transform = transforms.Compose([
-        transforms.ToTensor(),
-    ])
-    image = Image.open(image_path).convert("RGB")
-    image_tensor = transform(image).unsqueeze(0)
-
-    # Upscale the image
+    # 5. Prédiction
     with torch.no_grad():
-        output_tensor = model(image_tensor)
+        output_tensor = model(input_tensor).squeeze(0).cpu()
 
-    # Save the upscaled image
-    output_image = transforms.ToPILImage()(output_tensor.squeeze(0))
-    output_image.save(output_path)
-    print(f"Upscaled image saved to {output_path}")
+    # 6. Reconvertir les tenseurs en images
+    to_pil = T.ToPILImage()
+    enhanced_img = to_pil(output_tensor)
+    lr_img_upscaled_pil = to_pil(input_tensor.squeeze(0).cpu())
 
-if __name__ == '__main__':
-    # Example usage:
-    # Ensure a dummy model and image exist for demonstration
-    if not os.path.exists('models'):
-        os.makedirs('models')
-    if not os.path.exists('data/dummy_images'):
-        os.makedirs('data/dummy_images')
-    if not os.path.exists('results'):
-        os.makedirs('results')
+    # 7. Sauvegarde
+    enhanced_img.save(output_path_hr)
+    lr_img_upscaled_pil.save(output_path_lr)
 
-    # Create a dummy model and image if they don't exist
-    if not os.path.exists('models/upscale_cnn.pth'):
-        # Create and save a dummy model
-        dummy_model = UpscaleCNN()
-        torch.save(dummy_model.state_dict(), 'models/upscale_cnn.pth')
+    print(f"✅ Image améliorée sauvegardée : {output_path_hr}")
+    print(f"🔍 Image basse résolution (entrée du modèle) sauvegardée : {output_path_lr}")
 
-    if not os.path.exists('data/dummy_images/cat_to_upscale.png'):
-        dummy_image = Image.new('RGB', (64, 64), color = 'blue')
-        dummy_image.save('data/dummy_images/cat_to_upscale.png')
 
-    upscale_image('models/upscale_cnn.pth', 'data/dummy_images/cat_to_upscale.png', 'results/upscaled_cat.png')
+enhance_image("dataset/2021-12-06_16-24-28_000.jpeg", "cnn_enhancer.pth", "results/enhanced_hr.png", "results/input_lr.png")
