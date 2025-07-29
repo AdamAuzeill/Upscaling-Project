@@ -41,4 +41,4 @@ def enhance_image(image_path, model_path, output_path_hr, output_path_lr):
     print(f"🔍 Image basse résolution (entrée du modèle) sauvegardée : {output_path_lr}")
 
 
-enhance_image("dataset/2021-12-06_16-24-28_000.jpeg", "cnn_enhancer.pth", "results/enhanced_hr.png", "results/input_lr.png")
+enhance_image("dataset/2021-12-06_16-24-28_000.jpeg", "models/cnn_enhancer.pth", "results/enhanced_hr.png", "results/input_lr.png")

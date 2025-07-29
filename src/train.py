@@ -12,7 +12,7 @@ from tqdm import tqdm
 # Dataset pré-calculé (crop fixe + lr/up)
 # ----------------------------
 class FixedCropEnhancementDataset(Dataset):
-    def __init__(self, folder, crop_size=128):
+    def __init__(self, folder, crop_size=12):
         self.crop_size = crop_size
         self.paths = sorted(
             glob.glob(os.path.join(folder, '*.jpg')) +
@@ -21,15 +21,17 @@ class FixedCropEnhancementDataset(Dataset):
         )
         self.to_tensor = T.ToTensor()
 
+
     def __len__(self):
         return len(self.paths)
 
+    
     def __getitem__(self, idx):
         img = Image.open(self.paths[idx]).convert('RGB')
         if img.width < self.crop_size or img.height < self.crop_size:
             raise RuntimeError(f"Image trop petite : {self.paths[idx]}")
 
-        # Crop centré fixe
+        # Crop un peu aléatoire
         left = (img.width - self.crop_size) // 2
         top = (img.height - self.crop_size) // 2
         hr_patch = img.crop((left, top, left + self.crop_size, top + self.crop_size))
@@ -130,9 +132,9 @@ if __name__ == "__main__":
     DATA_FOLDER = "dataset"
     train_model(
         data_folder=DATA_FOLDER,
-        crop_size=512,
-        epochs=20,
-        batch_size=12,
+        crop_size=128,
+        epochs=2,
+        batch_size=8,
         lr=2e-4,
         save_path="models/cnn_enhancer.pth"
     )
