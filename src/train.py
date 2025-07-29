@@ -23,30 +23,43 @@ class UpscaleCNN(nn.Module):
 
 # Custom Dataset for your cat images
 class CatDataset(Dataset):
-    def __init__(self, image_dir, transform=None):
+    def __init__(self, image_dir, transform=None, low_res_transform=None):
         self.image_dir = image_dir
         self.image_files = os.listdir(image_dir)
         self.transform = transform
+        self.low_res_transform = low_res_transform
 
     def __len__(self):
         return len(self.image_files)
 
     def __getitem__(self, idx):
         img_path = os.path.join(self.image_dir, self.image_files[idx])
-        image = Image.open(img_path).convert("RGB")
+        high_res_image = Image.open(img_path).convert("RGB")
+
+        low_res_image = high_res_image.copy()
+
         if self.transform:
-            image = self.transform(image)
-        return image
+            high_res_image = self.transform(high_res_image)
+
+        if self.low_res_transform:
+            low_res_image = self.low_res_transform(low_res_image)
+
+        return low_res_image, high_res_image
 
 def train_model(dataset_path, model_save_path, num_epochs=100, learning_rate=0.001):
     """
     Trains the CNN model and saves it.
     """
-    transform = transforms.Compose([
+    high_res_transform = transforms.Compose([
         transforms.ToTensor(),
     ])
 
-    dataset = CatDataset(image_dir=dataset_path, transform=transform)
+    low_res_transform = transforms.Compose([
+        transforms.Resize((64, 64), interpolation=Image.BICUBIC),
+        transforms.ToTensor(),
+    ])
+
+    dataset = CatDataset(image_dir=dataset_path, transform=high_res_transform, low_res_transform=low_res_transform)
     dataloader = DataLoader(dataset, batch_size=16, shuffle=True)
 
     model = UpscaleCNN()
@@ -54,11 +67,9 @@ def train_model(dataset_path, model_save_path, num_epochs=100, learning_rate=0.0
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
 
     for epoch in range(num_epochs):
-        for data in dataloader:
-            # For this simple example, we'll use the image itself as the target
-            # In a real scenario, you'd have low-res and high-res pairs
-            inputs = data
-            targets = data
+        for low_res, high_res in dataloader:
+            inputs = low_res
+            targets = high_res
 
             optimizer.zero_grad()
             outputs = model(inputs)
@@ -73,11 +84,4 @@ def train_model(dataset_path, model_save_path, num_epochs=100, learning_rate=0.0
 
 if __name__ == '__main__':
     # Example usage:
-    # Create a dummy dataset for demonstration
-    if not os.path.exists('data/dummy_images'):
-        os.makedirs('data/dummy_images')
-        for i in range(10):
-            dummy_image = Image.new('RGB', (128, 128), color = 'red')
-            dummy_image.save(f'data/dummy_images/cat_{i}.png')
-
-    train_model('data/dummy_images', 'models/upscale_cnn.pth')
+    train_model('dataset', 'models/upscale_cnn.pth')
