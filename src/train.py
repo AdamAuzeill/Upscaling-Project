@@ -43,7 +43,8 @@ def train_model(dataset_path, model_save_path, num_epochs=100, learning_rate=0.0
     Trains the CNN model and saves it.
     """
     transform = transforms.Compose([
-        transforms.ToTensor(),
+    transforms.Resize((256, 256)),  # Resize all images to 256x256
+    transforms.ToTensor(),
     ])
 
     dataset = CatDataset(image_dir=dataset_path, transform=transform)
@@ -52,7 +53,7 @@ def train_model(dataset_path, model_save_path, num_epochs=100, learning_rate=0.0
     model = UpscaleCNN()
     criterion = nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
-
+    
     for epoch in range(num_epochs):
         for data in dataloader:
             # For this simple example, we'll use the image itself as the target
@@ -72,12 +73,4 @@ def train_model(dataset_path, model_save_path, num_epochs=100, learning_rate=0.0
     print(f"Model saved to {model_save_path}")
 
 if __name__ == '__main__':
-    # Example usage:
-    # Create a dummy dataset for demonstration
-    if not os.path.exists('data/dummy_images'):
-        os.makedirs('data/dummy_images')
-        for i in range(10):
-            dummy_image = Image.new('RGB', (128, 128), color = 'red')
-            dummy_image.save(f'data/dummy_images/cat_{i}.png')
-
-    train_model('data/dummy_images', 'models/upscale_cnn.pth')
+    train_model('dataset', 'models/upscale_cnn.pth')
