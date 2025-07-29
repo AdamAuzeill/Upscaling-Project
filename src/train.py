@@ -56,7 +56,7 @@ def train_model(dataset_path, model_save_path, num_epochs=100, learning_rate=0.0
 
     low_res_transform = transforms.Compose([
         transforms.Resize((64, 64), interpolation=Image.BICUBIC),
-        transforms.ToTensor(),
+        transforms.ToTensor(),  
     ])
 
     dataset = CatDataset(image_dir=dataset_path, transform=high_res_transform, low_res_transform=low_res_transform)
@@ -65,7 +65,7 @@ def train_model(dataset_path, model_save_path, num_epochs=100, learning_rate=0.0
     model = UpscaleCNN()
     criterion = nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
-
+    
     for epoch in range(num_epochs):
         for low_res, high_res in dataloader:
             inputs = low_res
@@ -83,5 +83,4 @@ def train_model(dataset_path, model_save_path, num_epochs=100, learning_rate=0.0
     print(f"Model saved to {model_save_path}")
 
 if __name__ == '__main__':
-    # Example usage:
     train_model('dataset', 'models/upscale_cnn.pth')

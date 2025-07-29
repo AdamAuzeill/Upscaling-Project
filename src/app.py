@@ -1,7 +1,7 @@
 import argparse
-from src.image_utils import downscale_image, blur_image
-from src.train import train_model
-from src.upscale import upscale_image
+from image_utils import downscale_image, blur_image
+from train import train_model
+from upscale import upscale_image
 from PIL import Image
 import os
 
