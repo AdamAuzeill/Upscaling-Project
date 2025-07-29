@@ -1,7 +1,7 @@
 import torch
 from torchvision import transforms
 from PIL import Image
-from src.train import UpscaleCNN
+from train import UpscaleCNN
 import os
 
 def upscale_image(model_path, image_path, output_path):
