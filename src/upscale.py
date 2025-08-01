@@ -1,47 +1,49 @@
 import torch
 from torchvision import transforms
 from PIL import Image
-from train import UpscaleCNN
+from src.CNN_model import UpscaleCNN
+from src.EDSR_model import EDSR
 import os
-from datetime import datetime
 
-def process_and_save_images(model_path, input_image_path, downscale_size=(64, 64)):
+def upscale_image(model_path, image_path, output_path, model_name='cnn'):
     """
-    Processes an input image: saves original, downscaled, and upscaled versions.
+    Upscales an image using the trained model.
     """
-    # Generate output folder name based on current date and time
-    output_folder_name = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    output_folder = os.path.join("images", output_folder_name)
-    os.makedirs(output_folder, exist_ok=True)
-
-    # Load original image
-    image = Image.open(input_image_path).convert("RGB")
-    image.save(os.path.join(output_folder, "original.png"))
-
-    # Downscale image
-    downscale_transform = transforms.Resize(downscale_size, interpolation=Image.BICUBIC)
-    downscaled_image = downscale_transform(image)
-    downscaled_image.save(os.path.join(output_folder, "downscaled.png"))
-
-    # Prepare tensor for model
-    to_tensor = transforms.ToTensor()
-    image_tensor = to_tensor(downscaled_image).unsqueeze(0)
-
-    # Load model
-    model = UpscaleCNN()
+    # Load the model
+    if model_name == 'cnn':
+        model = UpscaleCNN()
+    elif model_name == 'edsr':
+        model = EDSR()
+    else:
+        raise ValueError("Invalid model name. Choose 'cnn' or 'edsr'.")
     model.load_state_dict(torch.load(model_path))
     model.eval()
 
-    # Upscale image
+    # Prepare the image
+    transform = transforms.Compose([
+        transforms.ToTensor(),
+    ])
+    image = Image.open(image_path).convert("RGB")
+    image_tensor = transform(image).unsqueeze(0)
+
+    # Upscale the image
     with torch.no_grad():
         output_tensor = model(image_tensor)
-    upscaled_image = transforms.ToPILImage()(output_tensor.squeeze(0))
-    upscaled_image.save(os.path.join(output_folder, "upscaled.png"))
 
-    print(f"Images saved in {output_folder}")
+    # Save the upscaled image
+    output_image = transforms.ToPILImage()(output_tensor.squeeze(0))
+    output_image.save(output_path)
+    print(f"Upscaled image saved to {output_path}")
 
 if __name__ == '__main__':
-    input_image_path = "dataset/2025-02-02_11-22-37_263.jpeg"
-    model_path = "models/upscale_cnn.pth"
+    import argparse
+    parser = argparse.ArgumentParser(description="Upscale an image.")
+    parser.add_argument('image_path', type=str, help='Path to the input image')
+    parser.add_argument('output_path', type=str, help='Path to save the upscaled image')
+    parser.add_argument('--model', type=str, default='cnn', choices=['cnn', 'edsr'], help='The model to use for upscaling.')
+    args = parser.parse_args()
 
-    process_and_save_images(model_path, input_image_path, downscale_size=(128, 128))
+    model_path = f'models/upscale_{args.model}.pth'
+
+    # Example usage:
+    upscale_image(model_path, args.image_path, args.output_path, model_name=args.model)

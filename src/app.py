@@ -1,7 +1,7 @@
 import argparse
-from image_utils import downscale_image, blur_image
-from train import train_model
-from upscale import upscale_image
+from src.image_utils import downscale_image, blur_image
+from src.train import train_model
+from src.upscale import upscale_image
 from PIL import Image
 import os
 
@@ -24,7 +24,7 @@ def main():
     # Train command
     parser_train = subparsers.add_parser('train', help='Train the upscaling model')
     parser_train.add_argument('dataset_path', type=str, help='Path to the training dataset')
-    parser_train.add_argument('--model_save_path', type=str, default='models/upscale_cnn.pth', help='Path to save the trained model')
+    parser_train.add_argument('--model', type=str, default='cnn', choices=['cnn', 'edsr'], help='The model to train.')
     parser_train.add_argument('--epochs', type=int, default=100, help='Number of training epochs')
     parser_train.add_argument('--lr', type=float, default=0.001, help='Learning rate')
 
@@ -32,7 +32,7 @@ def main():
     parser_upscale = subparsers.add_parser('upscale', help='Upscale an image')
     parser_upscale.add_argument('image_path', type=str, help='Path to the input image')
     parser_upscale.add_argument('output_path', type=str, help='Path to save the upscaled image')
-    parser_upscale.add_argument('--model_path', type=str, default='models/upscale_cnn.pth', help='Path to the trained model')
+    parser_upscale.add_argument('--model', type=str, default='cnn', choices=['cnn', 'edsr'], help='The model to use for upscaling.')
 
     # Downscale command
     parser_downscale = subparsers.add_parser('downscale', help='Downscale an image')
@@ -54,9 +54,11 @@ def main():
     args = parser.parse_args()
 
     if args.command == 'train':
-        train_model(args.dataset_path, args.model_save_path, args.epochs, args.lr)
+        model_save_path = f'models/upscale_{args.model}.pth'
+        train_model(args.dataset_path, model_save_path, model_name=args.model, num_epochs=args.epochs, learning_rate=args.lr)
     elif args.command == 'upscale':
-        upscale_image(args.model_path, args.image_path, args.output_path)
+        model_path = f'models/upscale_{args.model}.pth'
+        upscale_image(model_path, args.image_path, args.output_path, model_name=args.model)
     elif args.command == 'downscale':
         downscale_image(args.image_path, args.output_path, tuple(args.size))
     elif args.command == 'blur':
