@@ -12,8 +12,19 @@ from tqdm import tqdm
 # Dataset pré-calculé (crop fixe + lr/up)
 # ----------------------------
 class FixedCropEnhancementDataset(Dataset):
-    def __init__(self, folder, crop_size=12):
-        self.crop_size = crop_size
+    def __init__(self, folder, hr_size=128, lr_size=None):
+        """
+        Dataset pour super-résolution avec crop fixe.
+
+        Args:
+            folder (str): dossier contenant les images
+            hr_size (int): taille (carrée) des patches haute résolution
+            lr_size (int, optionnel): taille basse résolution avant upscale.
+                                      Si None, on prend hr_size // 2 (x2 upscale).
+        """
+        self.hr_size = hr_size
+        self.lr_size = lr_size if lr_size is not None else hr_size // 2
+
         self.paths = sorted(
             glob.glob(os.path.join(folder, '*.jpg')) +
             glob.glob(os.path.join(folder, '*.jpeg')) +
@@ -25,22 +36,22 @@ class FixedCropEnhancementDataset(Dataset):
     def __len__(self):
         return len(self.paths)
 
-    
     def __getitem__(self, idx):
         img = Image.open(self.paths[idx]).convert('RGB')
-        if img.width < self.crop_size or img.height < self.crop_size:
+        if img.width < self.hr_size or img.height < self.hr_size:
             raise RuntimeError(f"Image trop petite : {self.paths[idx]}")
 
-        # Crop un peu aléatoire
-        left = (img.width - self.crop_size) // 2
-        top = (img.height - self.crop_size) // 2
-        hr_patch = img.crop((left, top, left + self.crop_size, top + self.crop_size))
+        # Crop centré
+        left = (img.width - self.hr_size) // 2
+        top = (img.height - self.hr_size) // 2
+        hr_patch = img.crop((left, top, left + self.hr_size, top + self.hr_size))
 
         # Downscale puis upscale
-        lr_patch = hr_patch.resize((self.crop_size // 2, self.crop_size // 2), Image.BICUBIC)
-        lr_patch = lr_patch.resize((self.crop_size, self.crop_size), Image.BICUBIC)
+        lr_patch = hr_patch.resize((self.lr_size, self.lr_size), Image.BICUBIC)
+        lr_patch = lr_patch.resize((self.hr_size, self.hr_size), Image.BICUBIC)
 
         return self.to_tensor(lr_patch), self.to_tensor(hr_patch)
+
 
 
 class PrecomputedRAMDataset(Dataset):
@@ -49,7 +60,7 @@ class PrecomputedRAMDataset(Dataset):
         self.data = []
         for i in tqdm(range(len(base_dataset))):
             self.data.append(base_dataset[i])
-        print(f"✅ Chargé {len(self.data)} images en RAM")
+        print(f"Chargé {len(self.data)} images en RAM")
 
     def __len__(self):
         return len(self.data)
@@ -59,17 +70,25 @@ class PrecomputedRAMDataset(Dataset):
 
 
 # ----------------------------
-# Modèle CNN simple
+# Modèle CNN
 # ----------------------------
 class CNNEnhancer(nn.Module):
     def __init__(self):
         super().__init__()
         self.net = nn.Sequential(
-            nn.Conv2d(3, 64, 9, padding=4),
+            nn.Conv2d(3, 128, kernel_size=9, padding=4),
             nn.ReLU(inplace=True),
-            nn.Conv2d(64, 32, 5, padding=2),
+
+            nn.Conv2d(128, 128, kernel_size=5, padding=2),
             nn.ReLU(inplace=True),
-            nn.Conv2d(32, 3, 5, padding=2)
+
+            nn.Conv2d(128, 64, kernel_size=3, padding=1),
+            nn.ReLU(inplace=True),
+
+            nn.Conv2d(64, 64, kernel_size=3, padding=1),
+            nn.ReLU(inplace=True),
+
+            nn.Conv2d(64, 3, kernel_size=5, padding=2)
         )
 
     def forward(self, x):
@@ -80,31 +99,31 @@ class CNNEnhancer(nn.Module):
 # Boucle d'entraînement
 # ----------------------------
 def train_model(data_folder,
-                crop_size=128,
+                hr_size=128,
+                lr_size=None,
                 epochs=20,
                 batch_size=16,
-                lr=1e-4,
+                learning_rate=1e-4,
                 save_path=None):
 
-    # On utilise le GPU si possible
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # Création du dataset et chargement de celui-ci
-    base_dataset = FixedCropEnhancementDataset(data_folder, crop_size)
+    # Dataset + préchargement en RAM
+    base_dataset = FixedCropEnhancementDataset(data_folder, hr_size=hr_size, lr_size=lr_size)
     dataset = PrecomputedRAMDataset(base_dataset)
 
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=True,
                         num_workers=2, pin_memory=True)
 
+    # Modèle + optimiseur + fonction de perte
     model = CNNEnhancer().to(device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
     loss_fn = nn.MSELoss()
 
-    for epoch in range(1, epochs+1):
+    for epoch in range(1, epochs + 1):
         model.train()
         running_loss = 0.0
 
-        # Boucle sur les batch
         for lr_imgs, hr_imgs in tqdm(loader, desc=f"Epoch {epoch}/{epochs}"):
             lr_imgs = lr_imgs.to(device, non_blocking=True)
             hr_imgs = hr_imgs.to(device, non_blocking=True)
@@ -112,17 +131,18 @@ def train_model(data_folder,
             preds = model(lr_imgs)
             loss = loss_fn(preds, hr_imgs)
 
-            optimizer.zero_grad() # On remet les gradients à 0
-            loss.backward() # On calcule la dérivée partielle (gradient) pour chaque poids
-            optimizer.step() # On ajuste les poids en fonction du gradient
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
 
             running_loss += loss.item() * lr_imgs.size(0)
 
         avg_loss = running_loss / len(dataset)
         print(f"Epoch {epoch} | Avg Loss: {avg_loss:.6f}")
 
-    torch.save(model.state_dict(), save_path)
-    print(f"\n💾 Modèle sauvegardé dans {save_path}")
+    if save_path:
+        torch.save(model.state_dict(), save_path)
+        print(f"\n Modèle sauvegardé dans {save_path}")
 
 
 # ------------
@@ -132,9 +152,10 @@ if __name__ == "__main__":
     DATA_FOLDER = "dataset"
     train_model(
         data_folder=DATA_FOLDER,
-        crop_size=128,
+        hr_size=256,
+        lr_size=128,
         epochs=2,
-        batch_size=8,
-        lr=2e-4,
-        save_path="models/cnn_enhancer.pth"
+        batch_size=16,
+        learning_rate=1e-4,
+        save_path="/content/drive/MyDrive/Colab Notebooks/models/cnn_enhancer.pth"
     )
